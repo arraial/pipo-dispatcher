@@ -1,0 +1,13 @@
+name: test_application
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "**" ]
+
+jobs:
+  python:
+    uses: arraial/workflows/.github/workflows/go.yml@0.0.6
+    secrets: inherit
+    with:
+      app_name: ${{ vars.APP_NAME }}
