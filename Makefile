@@ -45,7 +45,7 @@ format:
 
 .PHONY: test
 test:
-	go test
+	go test ./...
 
 .PHONY: docs
 docs:

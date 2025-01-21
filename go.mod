@@ -1,6 +1,6 @@
 module github.com/arraial/pipo-dispatcher
 
-go 1.23.4
+go 1.23
 
 require (
 	github.com/gofrs/uuid/v5 v5.3.0
