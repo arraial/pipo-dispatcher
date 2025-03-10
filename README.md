@@ -13,7 +13,7 @@ The application is compatible with Windows and Linux based systems.
 [Docker](https://docs.docker.com/engine/install/) + [Docker Compose](https://docs.docker.com/compose/install/) are assumed to be installed and configured.
 
 ### Development
-One may leverage VS Code Devcontainer for a simplified setup or other suitable option, as describbed in [Manual Setup](#manual).
+One may leverage VS Code Devcontainer for a simplified setup or other suitable option, as described in [Manual Setup](#manual).
 
 #### Visual Studio Devcontainer
 Devcontainer functionality can be used by choosing option `Dev Containers: Open Folder in Container...` in VS Code.

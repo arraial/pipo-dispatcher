@@ -1,20 +1,15 @@
 package models
 
-type Provider int
+type Provider string
 
 const (
-	Youtube Provider = iota
-	Spotify
+	Youtube Provider = "youtube"
+	Spotify Provider = "spotify"
 )
 
-func (p Provider) String() string {
-	return []string{"youtube", "spotify"}[p]
-}
-
 type ProviderOperation struct {
-	UUID      myUUID   `json:"uuid"`
+	ServerData
 	Provider  Provider `json:"provider"`
-	Server_id string   `json:"server_id"`
 	Operation string   `json:"operation"`
 	Shuffle   bool     `json:"shuffle"`
 	Query     string   `json:"query"`

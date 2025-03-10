@@ -21,8 +21,8 @@ var version string = "latest"
 func main() {
 	var config = settings.InitConfig()
 
-	fmt.Println(config.GetString("telemetry.service"))
-	fmt.Println("Version: " + version)
+	log.Println(config.GetString("telemetry.service"))
+	log.Println("Version: " + version)
 
 	if err := run(); err != nil {
 		log.Fatalln(err)
@@ -33,13 +33,17 @@ func serverIsHealthy() bool {
 	return true
 }
 
-func healthHandler(w http.ResponseWriter, r *http.Request) {
+func livezHandler(w http.ResponseWriter, r *http.Request) {
 	if serverIsHealthy() {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "Server is healthy")
-	} else {
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, "Server is not healthy")
+	}
+}
+
+func readyzHandler(w http.ResponseWriter, r *http.Request) {
+	if serverIsHealthy() {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "Server is healthy")
 	}
 }
 
@@ -51,10 +55,10 @@ func newHTTPHandler() http.Handler {
 		mux.Handle(pattern, handler)
 	}
 
-	handleFunc("/healthz", healthHandler)
+	handleFunc("/livez", livezHandler)
+	handleFunc("/readyz", readyzHandler)
 
-	handler := otelhttp.NewHandler(mux, "/")
-	return handler
+	return otelhttp.NewHandler(mux, "/")
 }
 
 func run() (err error) {
@@ -69,7 +73,7 @@ func run() (err error) {
 		err = errors.Join(err, otelShutdown(context.Background()))
 	}()
 
-	// Start HTTP server.
+	// Start HTTP server
 	srv := &http.Server{
 		Addr:         ":8080",
 		BaseContext:  func(_ net.Listener) context.Context { return ctx },
@@ -82,11 +86,13 @@ func run() (err error) {
 		srvErr <- srv.ListenAndServe()
 	}()
 
-	// Handle interruptions
+	// TODO Handle interruptions
 	select {
 	case err = <-srvErr:
+		log.Fatal("Unexpected error happened. Stopping application.")
 		return
 	case <-ctx.Done():
+		log.Println("Application was stopped.")
 		stop()
 	}
 
