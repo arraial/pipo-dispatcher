@@ -11,6 +11,9 @@ telemetry:
 probes:
   host: "0.0.0.0"
   port: 8080
+  timeout:
+    read: 1
+    write: 10
   log_level: info
   liveness:
     timeout: 5
@@ -49,6 +52,8 @@ player:
             message-ttl: 86400000       # 24 hour
       dispatcher:
         queue: dispatcher
+        durable: true
+        declare: true
         args:
           x-dead-letter-exchange: dlx   # match service.dead_letter.exchange.name
           x-dead-letter-routing-key: "dl.dispatch"

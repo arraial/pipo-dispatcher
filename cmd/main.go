@@ -9,19 +9,18 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"time"
 
 	"github.com/arraial/pipo-dispatcher/internal/settings"
 	"github.com/arraial/pipo-dispatcher/internal/telemetry"
+	config "github.com/spf13/viper"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 var version string = "latest"
 
 func main() {
-	var config = settings.InitConfig()
-
-	log.Println(config.GetString("telemetry.service"))
+	var conf = settings.InitConfig()
+	log.Println(conf.GetString("telemetry.service"))
 	log.Println("Version: " + version)
 
 	if err := run(); err != nil {
@@ -55,10 +54,10 @@ func newHTTPHandler() http.Handler {
 		mux.Handle(pattern, handler)
 	}
 
-	handleFunc("/livez", livezHandler)
-	handleFunc("/readyz", readyzHandler)
+	handleFunc(config.GetString("probes.liveness.endpoint"), livezHandler)
+	handleFunc(config.GetString("probes.readiness.endpoint"), readyzHandler)
 
-	return otelhttp.NewHandler(mux, "/")
+	return otelhttp.NewHandler(mux, config.GetString("telemetry.metrics.endpoint"))
 }
 
 func run() (err error) {
@@ -75,10 +74,10 @@ func run() (err error) {
 
 	// Start HTTP server
 	srv := &http.Server{
-		Addr:         ":8080",
+		Addr:         config.GetString("probes.host") + ":" + config.GetString("probes.port"),
 		BaseContext:  func(_ net.Listener) context.Context { return ctx },
-		ReadTimeout:  time.Second,
-		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  config.GetDuration("probes.timeout.read"),
+		WriteTimeout: config.GetDuration("probes.timeout.write"),
 		Handler:      newHTTPHandler(),
 	}
 	srvErr := make(chan error, 1)
