@@ -57,7 +57,7 @@ dist:
 
 .PHONY: image
 image:
-	docker buildx bake image
+	docker buildx bake image-local
 
 .PHONY: test_image
 test_image:
@@ -65,4 +65,4 @@ test_image:
 
 .PHONY: run_image
 run_image: image
-	docker run -d --name $(APP) --env-file .env $(APP):latest
+	docker run -it -d --name $(APP) --env-file .env $(APP):latest

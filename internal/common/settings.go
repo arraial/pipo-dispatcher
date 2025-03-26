@@ -1,13 +1,27 @@
-package settings
+package common
 
 import (
 	"log"
 	"strings"
+	"sync"
 
 	"github.com/spf13/viper"
 )
 
-func InitConfig() *viper.Viper {
+var (
+	config_instance *viper.Viper
+	config_once     sync.Once
+)
+
+// returns configuration singleton instance
+func GetConfig() *viper.Viper {
+	config_once.Do(func() {
+		config_instance = initConfig()
+	})
+	return config_instance
+}
+
+func initConfig() *viper.Viper {
 	viper_instance := viper.New()
 
 	viper_instance.SetConfigType("yaml")

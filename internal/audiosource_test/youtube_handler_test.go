@@ -3,7 +3,7 @@ package audiosource_test
 import (
 	"testing"
 
-	audiosource "github.com/arraial/pipo-dispatcher/internal/audio_source"
+	audiosource "github.com/arraial/pipo-dispatcher/internal/audiosource"
 	models "github.com/arraial/pipo-dispatcher/models"
 	uuid "github.com/gofrs/uuid/v5"
 	"github.com/google/go-cmp/cmp"

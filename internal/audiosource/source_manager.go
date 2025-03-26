@@ -20,7 +20,7 @@ func randomize(slice []string) {
 
 func (s *SourceManager) Handle(request models.MusicRequest) []models.ProviderOperation {
 	result := make([]models.ProviderOperation, 0)
-	var queries = request.Query
+	queries := request.Query
 	if request.Shuffle {
 		randomize(queries)
 	}

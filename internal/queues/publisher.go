@@ -1,42 +1,74 @@
 package queues
 
 import (
-	"log"
+	"context"
+	"encoding/json"
+	"fmt"
 
-	config "github.com/spf13/viper"
+	common "github.com/arraial/pipo-dispatcher/internal/common"
+	"github.com/arraial/pipo-dispatcher/models"
 	mq "github.com/wagslane/go-rabbitmq"
 )
 
-func Publisher(conn *mq.Conn) (*mq.Publisher, error) {
+func createPublisher(conn *mq.Conn) (*mq.Publisher, error) {
 
-	publisher_options := mq.PublisherOptions{
-		ExchangeOptions: mq.ExchangeOptions{
-			Name:    config.GetString("player.queue.service.dispatcher.queue"),
-			Declare: config.GetBool("player.queue.service.dispatcher.declare"),
-			Durable: config.GetBool("player.queue.service.dispatcher.durable"),
-			Args:    config.GetStringMap("player.queue.service.dispatcher.args"),
-		},
-	}
+	var log = common.GetLogger()
+	var config = common.GetConfig()
 
 	publisher, err := mq.NewPublisher(
-		conn, func(options *mq.PublisherOptions) {
-			*options = publisher_options
-		},
+		conn,
+		mq.WithPublisherOptionsExchangeName(config.GetString("queue.service.transmuter.exchange.name")),
+		mq.WithPublisherOptionsExchangeKind(config.GetString("queue.service.transmuter.exchange.type")),
+		mq.WithPublisherOptionsExchangeDurable,
+		mq.WithPublisherOptionsExchangeDeclare,
 		mq.WithPublisherOptionsLogging,
+		mq.WithPublisherOptionsLogger(mq.Logger(log)),
 	)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalw("Unable to create publisher", "error", err)
 	}
-	defer publisher.Close()
+	return publisher, err
+}
 
-	// TODO review
-	publisher.NotifyReturn(func(r mq.Return) {
-		log.Printf("Message returned from server: %s", string(r.Body))
-	})
-
-	// TODO review
-	publisher.NotifyPublish(func(c mq.Confirmation) {
-		log.Printf("Message confirmed from server. tag: %v, ack: %v", c.DeliveryTag, c.Ack)
-	})
+func StartPublisher(ctx context.Context, conn *mq.Conn, messages chan *models.ProviderOperation) (*mq.Publisher, error) {
+	log := common.GetLogger()
+	config := common.GetConfig()
+	publisher, err := createPublisher(conn)
+	if err != nil {
+		log.Errorw("Error creating publisher", "error", err)
+		return nil, err
+	}
+	go func(ctx context.Context, cons *mq.Publisher) {
+		defer publisher.Close()
+		log.Info("Starting publisher")
+		for {
+			select {
+			case message, ok := <-messages:
+				if !ok {
+					log.Info("Channel closed. Stopping publisher")
+					return
+				}
+				provider := fmt.Sprintf(
+					"%s.%s.%s",
+					config.GetString("queue.service.transmuter.routing_key"),
+					message.Provider,
+					message.Operation,
+				)
+				data, publisherErr := json.Marshal(message)
+				if publisherErr != nil {
+					log.Errorw("Unable to marshall message", "error", publisherErr)
+					return
+				}
+				publisherErr = publisher.PublishWithContext(ctx, data, []string{provider})
+				if publisherErr != nil {
+					log.Errorw("Unable to publish message", "error", publisherErr)
+					return
+				}
+			case <-ctx.Done():
+				log.Info("Terminating publisher")
+				return
+			}
+		}
+	}(ctx, publisher)
 	return publisher, err
 }

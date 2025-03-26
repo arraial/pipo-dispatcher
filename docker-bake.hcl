@@ -25,6 +25,8 @@ target "_common" {
     BUILDKIT_CONTEXT_KEEP_GIT_DIR = 1
   }
   tags = [
+    "${IMAGE}:${TAG}",
+    "${IMAGE}:latest",
     "${GITHUB_REPOSITORY_OWNER}/${IMAGE}:${TAG}",
     "${GITHUB_REPOSITORY_OWNER}/${IMAGE}:latest"
   ]
@@ -38,11 +40,11 @@ target "_common" {
 target "docker-metadata-action" {}
 
 group "default" {
-  targets = ["image"]
+  targets = ["image-local"]
 }
 
-target "image" {
-  inherits = ["_common", "docker-metadata-action"]
+target "image-local" {
+  inherits = ["_common"]
   context = "."
   dockerfile = "Dockerfile"
   output = ["type=docker"]
@@ -50,13 +52,13 @@ target "image" {
 
 target "test" {
   target = "test"
-  inherits = ["image"]
+  inherits = ["image-local"]
   output = ["type=cacheonly"]
 }
 
 target "image-arch" {
   name = "image-${replace(arch, "/", "-")}"
-  inherits = ["image"]
+  inherits = ["image-local", "docker-metadata-action"]
   cache-from = ["type=registry,ref=${GITHUB_REPOSITORY_OWNER}/${IMAGE}:buildcache-${replace(arch, "/", "-")}"]
   cache-to = ["type=registry,ref=${GITHUB_REPOSITORY_OWNER}/${IMAGE}:buildcache-${replace(arch, "/", "-")},mode=max,image-manifest=true"]
   platform = [arch]
