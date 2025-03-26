@@ -6,8 +6,8 @@ on:
     branches: [ "**" ]
 
 jobs:
-  python:
-    uses: arraial/workflows/.github/workflows/go.yml@0.0.7
+  go:
+    uses: arraial/workflows/.github/workflows/go.yml@0.0.6
     secrets: inherit
     with:
       app_name: ${{ vars.APP_NAME }}
