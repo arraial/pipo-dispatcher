@@ -9,7 +9,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-func TestYoutubeHandler(t *testing.T) {
+func TestSpotifyHandler(t *testing.T) {
 	t.Parallel()
 	test_uuid, _ := uuid.FromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 	const server = "test"
@@ -20,10 +20,10 @@ func TestYoutubeHandler(t *testing.T) {
 		query              string
 		expected_operation string
 	}{
-		{"URL HTTP", "http://www.youtube.com/watch?v=1V_xRb0x9aw", "url"},
-		{"URL HTTPS", "https://www.youtube.com/watch?v=1V_xRb0x9aw", "url"},
-		{"Playlist source", "https://www.youtube.com/playlist?list=PL4lCao7KL_QFVb7Iudeipvc2BCavECqzc", "playlist"},
-		{"Playlist indexed", "https://www.youtube.com/watch?v=BaW_jenozKc&list=PL4lCao7KL_QFVb7Iudeipvc2BCavECqzc&index=1", "playlist"},
+		{"URL HTTP", "http://open.spotify.com/track/7gaA3wERFkFkgivjwbSvkG", "url"},
+		{"URL HTTPS", "https://open.spotify.com/track/0q6LuUqGLUiCPP1cbdwFs3", "url"},
+		{"Playlist source", "https://open.spotify.com/playlist/5XAzQsh9fmEqro13lLgD1I", "url"},
+		{"Album source", "https://open.spotify.com/album/4wtZQMNTC1O79kDxMBsEan", "url"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -35,14 +35,14 @@ func TestYoutubeHandler(t *testing.T) {
 				Shuffle: true,
 				Query:   []string{tt.query},
 			}
-			handler := audiosource.NewYoutubeHandler()
+			handler := audiosource.NewSpotifyHandler()
 			got := handler.Handle(&model, tt.query)
 			expected := &models.ProviderOperation{
 				ServerData: models.ServerData{
 					UUID:      test_uuid,
 					Server_id: server,
 				},
-				Provider:  models.Youtube,
+				Provider:  models.Spotify,
 				Operation: tt.expected_operation,
 				Shuffle:   shuffle,
 				Query:     tt.query,

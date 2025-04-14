@@ -9,14 +9,15 @@ import (
 	"os/signal"
 	"syscall"
 
+	amqp "github.com/ThreeDotsLabs/watermill-amqp/pkg/amqp"
 	common "github.com/arraial/pipo-dispatcher/internal/common"
-	queues "github.com/arraial/pipo-dispatcher/internal/queues"
+	"github.com/arraial/pipo-dispatcher/internal/queues"
 	"github.com/arraial/pipo-dispatcher/models"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.uber.org/zap"
 )
 
 var version string = "latest"
+var connections []*amqp.ConnectionWrapper
 
 func main() {
 	if err := run(); err != nil {
@@ -35,9 +36,17 @@ func livezHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// TODO check connection to MQ
+func serverIsReady() bool {
+	for _, conn := range connections {
+		if conn == nil || !conn.IsConnected() {
+			return false
+		}
+	}
+	return true
+}
+
 func readyzHandler(w http.ResponseWriter, r *http.Request) {
-	if serverIsHealthy() {
+	if serverIsReady() {
 		w.WriteHeader(http.StatusOK)
 		common.GetLogger().Info("Server is ready")
 	}
@@ -62,23 +71,22 @@ func newHTTPHandler() http.Handler {
 func run() (err error) {
 	config := common.GetConfig()
 
-	logger, _ := zap.NewProduction()
-	defer logger.Sync()
-	log := logger.Sugar()
+	log := common.GetLogger()
+	defer log.Sync()
 
 	log.Infow("Starting application", "app", config.GetString("app"), "version", version)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL)
-	errs := make(chan error, 5)
-	var rt_err error
+	errs := make(chan error, 1)
 
 	otelShutdown, err := common.SetupOTelSDK(ctx)
 	if err != nil {
-		log.Error("Failed to initialize OTel SDK", err)
-		errs <- err
+		log.Errorw("Failed to initialize OTel SDK", err)
+		return
 	}
 	defer func() {
-		rt_err = errors.Join(rt_err, otelShutdown(context.Background()))
+		err = errors.Join(err, otelShutdown(context.Background()))
+		log.Error("Unable to shutdown otel")
 	}()
 
 	srv := &http.Server{
@@ -89,39 +97,27 @@ func run() (err error) {
 		Handler:      newHTTPHandler(),
 	}
 	go func() {
-		errs <- srv.ListenAndServe()
+		err = errors.Join(err, srv.ListenAndServe())
 	}()
 	defer func() {
-		rt_err = errors.Join(rt_err, srv.Shutdown(ctx))
+		log.Errorw("Unable to shutdown probe server", "error", srv.Shutdown(ctx))
 	}()
 
 	log.Info("Probe HTTP server started")
 	messages := make(chan *models.ProviderOperation, config.GetInt("queue.broker.buffer_size"))
 	defer close(messages)
 
-	connection, err := queues.Connection(config.GetString("queue.broker.url"))
+	consumer, err := queues.CreateConsumer(ctx, messages)
 	if err != nil {
-		log.Errorw("Failed to initialize message queue connection", "error", err, "url")
-		errs <- err
-	} else {
-		defer connection.Close()
+		log.Fatalw("Failed to start consumer", "error", err)
 	}
 
-	publisher, err := queues.StartPublisher(ctx, connection, messages)
+	publisher, err := queues.CreatePublisher(ctx, messages)
 	if err != nil {
-		log.Errorw("Failed to start publisher", "error", err)
-		errs <- err
-	} else {
-		defer publisher.Close()
+		log.Fatalw("Failed to start publisher", "error", err)
 	}
 
-	consumer, err := queues.StartConsumer(ctx, connection, messages, config.GetInt("queue.broker.max_consumers"))
-	if err != nil {
-		log.Errorw("Failed to start consumer", "error", err)
-		errs <- err
-	} else {
-		defer consumer.Close()
-	}
+	connections = append(connections, consumer.ConnectionWrapper, publisher.ConnectionWrapper)
 
 	log.Info("Started processing messages")
 	for {
@@ -130,9 +126,9 @@ func run() (err error) {
 			log.Errorw("Unexpected error", "error", err)
 			stop()
 		case <-ctx.Done():
-			rt_err = ctx.Err()
+			err = errors.Join(err, ctx.Err())
 			log.Infow("Stopping application", "error", err)
-			return rt_err
+			return
 		}
 	}
 }

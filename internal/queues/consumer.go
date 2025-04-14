@@ -2,55 +2,90 @@ package queues
 
 import (
 	"context"
+	"encoding/json"
 
+	"github.com/ThreeDotsLabs/watermill"
+	amqp "github.com/ThreeDotsLabs/watermill-amqp/pkg/amqp"
+	"github.com/ThreeDotsLabs/watermill/message"
+	audiosource "github.com/arraial/pipo-dispatcher/internal/audiosource"
 	common "github.com/arraial/pipo-dispatcher/internal/common"
 	models "github.com/arraial/pipo-dispatcher/models"
-	mq "github.com/wagslane/go-rabbitmq"
 )
 
-func createConsumer(conn *mq.Conn, concurrency int) (*mq.Consumer, error) {
-	var log = common.GetLogger()
-	var config = common.GetConfig()
+func CreateConsumer(ctx context.Context, ch chan *models.ProviderOperation) (subscriber *amqp.Subscriber, err error) {
+	log := common.GetLogger()
+	config := common.GetConfig()
 
-	consumer, err := mq.NewConsumer(
-		conn,
-		config.GetString("queue.service.dispatcher.queue"),
-		mq.WithConsumerOptionsConcurrency(concurrency),
-		mq.WithConsumerOptionsQueueArgs(config.GetStringMap("queue.service.dispatcher.args")),
-		mq.WithConsumerOptionsQueueDurable,
-		mq.WithConsumerOptionsLogging,
-		mq.WithConsumerOptionsLogger(mq.Logger(log)),
+	subscriber, err = amqp.NewSubscriber(
+		consumerConfiguration(),
+		watermill.NewStdLogger(false, false),
 	)
 	if err != nil {
 		log.Fatalw("Unable to create consumer", "error", err)
 	}
-	log.Debug("Consumer created")
-	return consumer, err
+
+	messages, err := subscriber.Subscribe(ctx, config.GetString("queue.service.dispatcher.queue"))
+	if err != nil {
+		log.Fatalw("Unable to start consuming from topic", "error", err)
+	}
+	go process(messages, ch)
+	log.Info("Consumer created")
+	return
 }
 
-func StartConsumer(ctx context.Context, connection *mq.Conn, messages chan *models.ProviderOperation, consumers int) (*mq.Consumer, error) {
-	log := common.GetLogger()
-	consumer, consumerErr := createConsumer(connection, consumers)
-	if consumerErr != nil {
-		log.Errorw("Error creating consumer", "error", consumerErr)
-		return nil, consumerErr
+func process(messages <-chan *message.Message, ch chan<- *models.ProviderOperation) {
+	handlers := []*audiosource.Handler{
+		audiosource.NewSpotifyHandler(),
+		audiosource.NewYoutubeHandler(),
+		audiosource.NewYoutubeQueryHandler(),
 	}
-	go func(ctx context.Context, cons *mq.Consumer) {
-		// blocking call
-		err := cons.Run(func(d mq.Delivery) mq.Action {
-			if d.Body == nil {
-				log.Errorw("Received empty message")
-				return mq.NackDiscard
-			}
-			// TODO implement logic to create messages
-
-			// mq.Ack, mq.NackDiscard, mq.NackRequeue
-			return mq.Ack
-		})
-		if err != nil {
-			log.Errorw("Error running consumer", "error", err)
-			return
+	manager := audiosource.NewSourceManager(handlers)
+	log := common.GetLogger()
+	log.Info("Consumer process created")
+	for msg := range messages {
+		var message models.MusicRequest
+		if err := json.Unmarshal(msg.Payload, &message); err != nil {
+			msg.Nack() // TODO check later if retry makes sense
 		}
-	}(ctx, consumer)
-	return consumer, consumerErr
+		log.Infow("Received message", "message", message)
+		if _, err := manager.Handle(&message, ch); err != nil {
+			log.Errorw("Error processing operation", "request", message)
+			msg.Nack()
+		} else {
+			msg.Ack()
+		}
+	}
+}
+
+func consumerConfiguration() amqp.Config {
+	config := common.GetConfig()
+	return amqp.Config{
+		Connection: amqp.ConnectionConfig{
+			AmqpURI: config.GetString("queue.broker.url"),
+		},
+		Marshaler: amqp.DefaultMarshaler{},
+		Exchange: amqp.ExchangeConfig{
+			GenerateName: func(topic string) string {
+				return config.GetString("queue.service.dispatcher.exchange.name")
+			},
+			Type:    config.GetString("queue.service.dispatcher.exchange.type"),
+			Durable: config.GetBool("queue.service.dispatcher.exchange.durable"),
+		},
+		Queue: amqp.QueueConfig{
+			GenerateName: amqp.GenerateQueueNameConstant(config.GetString("queue.service.dispatcher.queue.name")),
+			Durable:      config.GetBool("queue.service.dispatcher.queue.durable"),
+			Arguments:    config.GetStringMap("queue.service.dispatcher.queue.args"),
+		},
+		QueueBind: amqp.QueueBindConfig{
+			GenerateRoutingKey: func(topic string) string {
+				return config.GetString("queue.service.dispatcher.queue.routing_key")
+			},
+		},
+		Consume: amqp.ConsumeConfig{
+			Qos: amqp.QosConfig{
+				PrefetchCount: 5,
+			},
+		},
+		TopologyBuilder: &amqp.DefaultTopologyBuilder{},
+	}
 }

@@ -29,12 +29,13 @@ type Handler struct {
 	iHandler IHandler
 }
 
-func (s *Handler) Handle(request models.MusicRequest, query string) models.ProviderOperation {
-	return models.ProviderOperation{
+func (s *Handler) Handle(request *models.MusicRequest, query string) (operation *models.ProviderOperation) {
+	operation = &models.ProviderOperation{
 		ServerData: request.ServerData,
 		Provider:   s.iHandler.Provider(query),
 		Operation:  s.iHandler.Operation(query),
 		Shuffle:    request.Shuffle,
 		Query:      query,
 	}
+	return
 }

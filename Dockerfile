@@ -10,10 +10,10 @@ FROM $BASE_IMAGE AS base
 FROM base AS builder-base
 ARG APP_PATH
 
-# copy project requirement files to ensure they will be cached
+# copy project requirement files to ensure they are cached
 WORKDIR $APP_PATH
 ARG PROGRAM_VERSION
-COPY go.mod ./
+COPY go.mod go.sum ./
 
 ENV GIN_MODE=release
 
@@ -27,11 +27,11 @@ COPY . .
 # build application
 RUN --mount=type=cache,target="/root/.cache/go-build" \
     CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags "-X main.version=${PROGRAM_VERSION}" \
+    -ldflags "-w -s -X main.version=${PROGRAM_VERSION}" \
     -o ./build/app \
     ./cmd
 
-# test the application
+# test application
 FROM builder-base AS test
 RUN go test -v ./...
 
@@ -41,7 +41,7 @@ ARG APP_PATH
 ARG APP_NAME
 
 COPY --from=builder-base ${APP_PATH}/build/app /usr/bin
-COPY --from=builder-base ${APP_PATH}/config /etc/${APP_NAME}
+COPY ./config /etc/${APP_NAME}
 
 EXPOSE $PORT
 ENTRYPOINT ["app"]

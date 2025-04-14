@@ -14,7 +14,7 @@ probes:
   host: "0.0.0.0"
   port: 8080
   timeout:
-    read: 1
+    read: 3
     write: 10
   log_level: info
   liveness:
@@ -36,11 +36,11 @@ queue:
     buffer_size: 100
   service:
     parking_lot:
-      queue: plq
+      queue: &plq plq
       durable: true
     dead_letter:
       exchange:
-        name: dlx
+        name: &dlx dlx
         durable: true
       queue:
         name: dlq
@@ -49,20 +49,26 @@ queue:
         args:
           x-queue-type: quorum
           x-delivery-limit: 3
-          x-dead-letter-exchange: plq # match service.parking_lot
-          message-ttl: 86400000       # 24 hour
+          x-dead-letter-exchange: *plq # match service.parking_lot
+          message-ttl: 86400000        # 24 hour
     dispatcher:
-      queue: dispatcher
-      args:
-        x-dead-letter-exchange: dlx   # match service.dead_letter.exchange.name
-        x-dead-letter-routing-key: "dl.dispatch"
-        x-queue-type: quorum
-        x-delivery-limit: 3
-        message-ttl: 3600000  # 1 hour
+      exchange:
+        type: direct
+        name: dispatcher
+        durable: true
+      queue:
+        name: dispatcher
+        routing_key: dispatcher
+        durable: true
+        args:
+          x-dead-letter-exchange: *dlx   # match service.dead_letter.exchange.name
+          x-dead-letter-routing-key: "dl.dispatcher"
+          x-queue-type: quorum
+          x-delivery-limit: 20
+          message-ttl: 3600000  # 1 hour
     transmuter:
       exchange:
         type: topic
         name: providers
         routing_key: provider
-        declare: true
         durable: true

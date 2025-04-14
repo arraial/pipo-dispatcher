@@ -40,10 +40,10 @@ target "_common" {
 target "docker-metadata-action" {}
 
 group "default" {
-  targets = ["image-local"]
+  targets = ["image"]
 }
 
-target "image-local" {
+target "image" {
   inherits = ["_common"]
   context = "."
   dockerfile = "Dockerfile"
@@ -52,25 +52,33 @@ target "image-local" {
 
 target "test" {
   target = "test"
-  inherits = ["image-local"]
+  inherits = ["image"]
   output = ["type=cacheonly"]
 }
 
 target "image-arch" {
-  name = "image-${replace(arch, "/", "-")}"
-  inherits = ["image-local", "docker-metadata-action"]
+  inherits = ["image", "docker-metadata-action"]
+  output = ["type=registry"]
+  sbom = true
+  platforms = ARCHS
+  cache-from = flatten([
+    for arch in ARCHS : "type=registry,ref=${GITHUB_REPOSITORY_OWNER}/${IMAGE}:buildcache-${replace(arch, "/", "-")}"
+  ])
+}
+
+target "image-arch-cache" {
+  name = "image-arch-cache-${replace(arch, "/", "-")}"
+  inherits = ["image", "docker-metadata-action"]
+  output = ["type=cacheonly"]
   cache-from = ["type=registry,ref=${GITHUB_REPOSITORY_OWNER}/${IMAGE}:buildcache-${replace(arch, "/", "-")}"]
-  cache-to = ["type=registry,ref=${GITHUB_REPOSITORY_OWNER}/${IMAGE}:buildcache-${replace(arch, "/", "-")},mode=max,image-manifest=true"]
-  platform = [arch]
+  cache-to = ["type=registry,ref=${GITHUB_REPOSITORY_OWNER}/${IMAGE}:buildcache-${replace(arch, "/", "-")},mode=max,oci-mediatypes=true,image-manifest=true"]
+  platform = arch
   matrix = {
     arch = ARCHS
   }
+  depends = ["image-arch"]
 }
 
 group "image-all" {
-  targets = flatten([
-    for arch in ARCHS : "image-${replace(arch, "/", "-")}"
-  ])
-  sbom = true
-  output = ["type=registry"]
+  targets = ["image-arch", "image-arch-cache"]
 }

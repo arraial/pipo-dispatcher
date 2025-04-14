@@ -57,7 +57,7 @@ dist:
 
 .PHONY: image
 image:
-	docker buildx bake image-local
+	docker buildx bake image --no-cache
 
 .PHONY: test_image
 test_image:

@@ -5,70 +5,72 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/ThreeDotsLabs/watermill"
+	"github.com/ThreeDotsLabs/watermill-amqp/pkg/amqp"
+	amqpMessage "github.com/ThreeDotsLabs/watermill/message"
 	common "github.com/arraial/pipo-dispatcher/internal/common"
-	"github.com/arraial/pipo-dispatcher/models"
-	mq "github.com/wagslane/go-rabbitmq"
+	models "github.com/arraial/pipo-dispatcher/models"
 )
 
-func createPublisher(conn *mq.Conn) (*mq.Publisher, error) {
+func CreatePublisher(ctx context.Context, messages <-chan *models.ProviderOperation) (publisher *amqp.Publisher, err error) {
+	log := common.GetLogger()
 
-	var log = common.GetLogger()
-	var config = common.GetConfig()
-
-	publisher, err := mq.NewPublisher(
-		conn,
-		mq.WithPublisherOptionsExchangeName(config.GetString("queue.service.transmuter.exchange.name")),
-		mq.WithPublisherOptionsExchangeKind(config.GetString("queue.service.transmuter.exchange.type")),
-		mq.WithPublisherOptionsExchangeDurable,
-		mq.WithPublisherOptionsExchangeDeclare,
-		mq.WithPublisherOptionsLogging,
-		mq.WithPublisherOptionsLogger(mq.Logger(log)),
-	)
+	publisher, err = amqp.NewPublisher(publisherConfiguration(), watermill.NewStdLogger(false, false))
 	if err != nil {
 		log.Fatalw("Unable to create publisher", "error", err)
 	}
-	return publisher, err
+
+	go publishMessages(publisher, messages)
+	log.Info("Publisher created")
+	return
 }
 
-func StartPublisher(ctx context.Context, conn *mq.Conn, messages chan *models.ProviderOperation) (*mq.Publisher, error) {
+func publishMessages(pub amqpMessage.Publisher, messages <-chan *models.ProviderOperation) {
 	log := common.GetLogger()
-	config := common.GetConfig()
-	publisher, err := createPublisher(conn)
-	if err != nil {
-		log.Errorw("Error creating publisher", "error", err)
-		return nil, err
-	}
-	go func(ctx context.Context, cons *mq.Publisher) {
-		defer publisher.Close()
-		log.Info("Starting publisher")
-		for {
-			select {
-			case message, ok := <-messages:
-				if !ok {
-					log.Info("Channel closed. Stopping publisher")
-					return
-				}
-				provider := fmt.Sprintf(
-					"%s.%s.%s",
-					config.GetString("queue.service.transmuter.routing_key"),
-					message.Provider,
-					message.Operation,
-				)
-				data, publisherErr := json.Marshal(message)
-				if publisherErr != nil {
-					log.Errorw("Unable to marshall message", "error", publisherErr)
-					return
-				}
-				publisherErr = publisher.PublishWithContext(ctx, data, []string{provider})
-				if publisherErr != nil {
-					log.Errorw("Unable to publish message", "error", publisherErr)
-					return
-				}
-			case <-ctx.Done():
-				log.Info("Terminating publisher")
-				return
-			}
+	log.Info("Starting publisher")
+	for message := range messages {
+		provider := fmt.Sprintf(
+			"%s.%s",
+			message.Provider,
+			message.Operation,
+		)
+		data, err := json.Marshal(message)
+		if err != nil {
+			log.Errorw("Unable to marshall message", "error", err)
+			continue
 		}
-	}(ctx, publisher)
-	return publisher, err
+		msg := amqpMessage.NewMessage(watermill.NewUUID(), data)
+		log.Infow("Publishing message", "message", msg, "provider", provider)
+		err = pub.Publish(provider, msg)
+		if err != nil {
+			log.Errorw("Unable to publish message", "error", err)
+		}
+	}
+}
+
+func publisherConfiguration() amqp.Config {
+	config := common.GetConfig()
+	return amqp.Config{
+		Connection: amqp.ConnectionConfig{
+			AmqpURI: config.GetString("queue.broker.url"),
+		},
+		Marshaler: amqp.DefaultMarshaler{},
+		Exchange: amqp.ExchangeConfig{
+			GenerateName: func(topic string) string {
+				return config.GetString("queue.service.transmuter.exchange.name")
+			},
+			Type:    config.GetString("queue.service.transmuter.exchange.type"),
+			Durable: config.GetBool("queue.service.transmuter.exchange.durable"),
+		},
+		Publish: amqp.PublishConfig{
+			GenerateRoutingKey: func(topic string) string {
+				return fmt.Sprintf(
+					"%s.%s",
+					common.GetConfig().GetString("queue.service.transmuter.exchange.routing_key"),
+					topic,
+				)
+			},
+		},
+		TopologyBuilder: &amqp.DefaultTopologyBuilder{},
+	}
 }

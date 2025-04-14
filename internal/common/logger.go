@@ -21,7 +21,5 @@ func GetLogger() *zap.SugaredLogger {
 
 func initLogger() *zap.SugaredLogger {
 	logger, _ := zap.NewProduction()
-	defer logger.Sync()
-	log := logger.Sugar()
-	return log
+	return logger.Sugar()
 }
