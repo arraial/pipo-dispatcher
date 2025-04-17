@@ -12,6 +12,18 @@ type SourceManager struct {
 	Handlers []*Handler
 }
 
+func defaultHandlers() []*Handler {
+	return []*Handler{
+		NewSpotifyHandler(),
+		NewYoutubeHandler(),
+		NewYoutubeQueryHandler(),
+	}
+}
+
+func NewDefaultSourceManager() *SourceManager {
+	return &SourceManager{Handlers: defaultHandlers()}
+}
+
 func NewSourceManager(handlers []*Handler) *SourceManager {
 	return &SourceManager{Handlers: handlers}
 }
@@ -27,7 +39,7 @@ func randomize(slice []string) {
 
 // TODO return error
 // go routines will be leveraged only if randomization is enabled
-func (s *SourceManager) Handle(request *models.MusicRequest, messages chan<- *models.ProviderOperation) (operations []*models.ProviderOperation, err error) {
+func (s *SourceManager) Handle(request *models.MusicRequest) (operations []*models.ProviderOperation, err error) {
 	log := common.GetLogger()
 	var wg sync.WaitGroup
 	queries := request.Query
@@ -37,31 +49,20 @@ func (s *SourceManager) Handle(request *models.MusicRequest, messages chan<- *mo
 		randomize(queries)
 		log.Info("Shuffled requested query")
 	}
-	for i, query := range queries {
-		log.Infow("Launched operation model creation for", "query", query)
-		go func(m chan<- *models.ProviderOperation, indx int, q string) {
+	for i, q := range queries {
+		log.Infow("Launched operation model creation", "query", q)
+		go func(indx int, query string) {
 			defer wg.Done()
 			for _, handler := range s.Handlers {
-				if handler.iHandler.CanHandle(q) {
-					log.Infow("Query will be handled", "query", q, "handler", handler.iHandler.Provider)
-					operation := handler.Handle(request, q)
+				if handler.iHandler.CanHandle(query) {
+					log.Infow("Query will be handled", "query", query, "handler", handler.iHandler.Provider(q))
+					operation := handler.Handle(request, query)
 					operations[indx] = operation
-					if request.Shuffle {
-						m <- operation
-					}
 					return
 				}
 			}
-		}(messages, i, query)
+		}(i, q)
 	}
 	wg.Wait()
-	if !request.Shuffle {
-		for _, op := range operations {
-			log.Infow("Sending operation to publisher", "operation", op)
-			if op != nil {
-				messages <- op
-			}
-		}
-	}
 	return
 }

@@ -9,15 +9,14 @@ import (
 	"os/signal"
 	"syscall"
 
-	amqp "github.com/ThreeDotsLabs/watermill-amqp/pkg/amqp"
+	amqpMessage "github.com/ThreeDotsLabs/watermill/message"
 	common "github.com/arraial/pipo-dispatcher/internal/common"
 	"github.com/arraial/pipo-dispatcher/internal/queues"
-	"github.com/arraial/pipo-dispatcher/models"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 var version string = "latest"
-var connections []*amqp.ConnectionWrapper
+var router *amqpMessage.Router
 
 func main() {
 	if err := run(); err != nil {
@@ -26,7 +25,7 @@ func main() {
 }
 
 func serverIsHealthy() bool {
-	return true
+	return router != nil
 }
 
 func livezHandler(w http.ResponseWriter, r *http.Request) {
@@ -37,12 +36,7 @@ func livezHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func serverIsReady() bool {
-	for _, conn := range connections {
-		if conn == nil || !conn.IsConnected() {
-			return false
-		}
-	}
-	return true
+	return router != nil && !router.IsClosed() && router.IsRunning()
 }
 
 func readyzHandler(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +73,7 @@ func run() (err error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL)
 	errs := make(chan error, 1)
 
-	otelShutdown, err := common.SetupOTelSDK(ctx)
+	otelShutdown, err := common.SetupOTelSDK(ctx, config.GetString("telemetry.service"), version)
 	if err != nil {
 		log.Errorw("Failed to initialize OTel SDK", err)
 		return
@@ -104,20 +98,15 @@ func run() (err error) {
 	}()
 
 	log.Info("Probe HTTP server started")
-	messages := make(chan *models.ProviderOperation, config.GetInt("queue.broker.buffer_size"))
-	defer close(messages)
 
-	consumer, err := queues.CreateConsumer(ctx, messages)
+	router, err = queues.CreateRouter(ctx)
 	if err != nil {
-		log.Fatalw("Failed to start consumer", "error", err)
+		log.Fatalw("Failed to create router", "error", err)
 	}
 
-	publisher, err := queues.CreatePublisher(ctx, messages)
-	if err != nil {
-		log.Fatalw("Failed to start publisher", "error", err)
-	}
-
-	connections = append(connections, consumer.ConnectionWrapper, publisher.ConnectionWrapper)
+	go func() {
+		err = errors.Join(err, router.Run(ctx))
+	}()
 
 	log.Info("Started processing messages")
 	for {

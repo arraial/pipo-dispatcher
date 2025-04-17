@@ -12,13 +12,29 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 )
+
+func newResource(app string, version string) *resource.Resource {
+	r, _ := resource.Merge(
+		resource.Default(),
+		resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceName(app),
+			semconv.ServiceVersion(version),
+		),
+	)
+	return r
+}
 
 // setupOTelSDK bootstraps the OpenTelemetry pipeline.
 // If it does not return an error, make sure to call shutdown for proper cleanup.
-func SetupOTelSDK(ctx context.Context) (shutdown func(context.Context) error, err error) {
+func SetupOTelSDK(ctx context.Context, app string, version string) (shutdown func(context.Context) error, err error) {
 	var shutdownFuncs []func(context.Context) error
+
+	resource := newResource(app, version)
 
 	// shutdown calls cleanup functions registered via shutdownFuncs.
 	// The errors from the calls are joined.
@@ -42,7 +58,7 @@ func SetupOTelSDK(ctx context.Context) (shutdown func(context.Context) error, er
 	otel.SetTextMapPropagator(prop)
 
 	// Set up trace provider.
-	tracerProvider, err := newTraceProvider(ctx)
+	tracerProvider, err := newTraceProvider(ctx, resource)
 	if err != nil {
 		handleErr(err)
 		return
@@ -51,7 +67,7 @@ func SetupOTelSDK(ctx context.Context) (shutdown func(context.Context) error, er
 	otel.SetTracerProvider(tracerProvider)
 
 	// Set up meter provider.
-	meterProvider, err := newMeterProvider(ctx)
+	meterProvider, err := newMeterProvider(ctx, resource)
 	if err != nil {
 		handleErr(err)
 		return
@@ -60,7 +76,7 @@ func SetupOTelSDK(ctx context.Context) (shutdown func(context.Context) error, er
 	otel.SetMeterProvider(meterProvider)
 
 	// Set up logger provider.
-	loggerProvider, err := newLoggerProvider(ctx)
+	loggerProvider, err := newLoggerProvider(ctx, resource)
 	if err != nil {
 		handleErr(err)
 		return
@@ -78,37 +94,40 @@ func newPropagator() propagation.TextMapPropagator {
 	)
 }
 
-func newTraceProvider(ctx context.Context) (*trace.TracerProvider, error) {
+func newTraceProvider(ctx context.Context, resource *resource.Resource) (*trace.TracerProvider, error) {
 	traceExporter, err := otlptracegrpc.New(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	traceProvider := trace.NewTracerProvider(
+		trace.WithResource(resource),
 		trace.WithBatcher(traceExporter),
 	)
 	return traceProvider, nil
 }
 
-func newMeterProvider(ctx context.Context) (*metric.MeterProvider, error) {
+func newMeterProvider(ctx context.Context, resource *resource.Resource) (*metric.MeterProvider, error) {
 	metricExporter, err := otlpmetricgrpc.New(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	meterProvider := metric.NewMeterProvider(
+		metric.WithResource(resource),
 		metric.WithReader(metric.NewPeriodicReader(metricExporter)),
 	)
 	return meterProvider, nil
 }
 
-func newLoggerProvider(ctx context.Context) (*log.LoggerProvider, error) {
+func newLoggerProvider(ctx context.Context, resource *resource.Resource) (*log.LoggerProvider, error) {
 	logExporter, err := otlploggrpc.New(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	loggerProvider := log.NewLoggerProvider(
+		log.WithResource(resource),
 		log.WithProcessor(log.NewBatchProcessor(logExporter)),
 	)
 	return loggerProvider, nil
