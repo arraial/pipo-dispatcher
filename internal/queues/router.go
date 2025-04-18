@@ -16,6 +16,7 @@ import (
 	models "github.com/arraial/pipo-dispatcher/models"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
@@ -30,8 +31,7 @@ type structHandler struct {
 func (s structHandler) Handler(msg *amqpMessage.Message) (err error) {
 	tracer := otel.Tracer("dispatcher")
 	log := common.GetLogger()
-	ctx, span := tracer.Start(msg.Context(), "process_music_request")
-	defer span.End()
+	ctx, span := tracer.Start(msg.Context(), "handler.createOperation", trace.WithSpanKind(trace.SpanKindConsumer))
 	log.Infow("Received message", "message", msg)
 
 	var request models.MusicRequest
@@ -42,7 +42,7 @@ func (s structHandler) Handler(msg *amqpMessage.Message) (err error) {
 	span.AddEvent(
 		"unmarshalled music request",
 		trace.WithAttributes(attribute.Bool("request.shuffle", request.Shuffle)),
-		trace.WithAttributes(attribute.String("request.server_id", request.Server_id)),
+		trace.WithAttributes(attribute.String("request.serverId", request.Server_id)),
 		trace.WithAttributes(attribute.StringSlice("request.query", request.Query)),
 		trace.WithAttributes(attribute.String("request.uuid", request.UUID.String())),
 	)
@@ -59,13 +59,12 @@ func (s structHandler) Handler(msg *amqpMessage.Message) (err error) {
 		span.AddEvent("launching operation publish routine")
 		go func(ct context.Context, operation *models.ProviderOperation) {
 			defer wg.Done()
-			data, err := json.Marshal(operation)
 			c, sp := tracer.Start(
 				ct,
-				"publish_operation",
-				trace.WithSpanKind(trace.SpanKindInternal),
+				"handler.publishOperation",
+				trace.WithSpanKind(trace.SpanKindProducer),
 				trace.WithAttributes(attribute.Bool("operation.shuffle", operation.Shuffle)),
-				trace.WithAttributes(attribute.String("operation.server_id", operation.Server_id)),
+				trace.WithAttributes(attribute.String("operation.serverId", operation.Server_id)),
 				trace.WithAttributes(attribute.String("operation.query", operation.Query)),
 				trace.WithAttributes(attribute.String("operation.uuid", operation.UUID.String())),
 				trace.WithAttributes(attribute.String("operation.type", operation.Operation)),
@@ -73,6 +72,7 @@ func (s structHandler) Handler(msg *amqpMessage.Message) (err error) {
 			)
 			defer sp.End()
 
+			data, err := json.Marshal(operation)
 			if err != nil {
 				log.Errorw("Unable to marshall message", "error", err)
 				sp.SetStatus(codes.Error, "message not published")
@@ -80,10 +80,11 @@ func (s structHandler) Handler(msg *amqpMessage.Message) (err error) {
 				return
 			} else {
 				newMessage := amqpMessage.NewMessage(watermill.NewUUID(), data)
-				newMessage.SetContext(c)
 				newMessage.Metadata = msg.Metadata
-				sp.AddEvent("message created")
-				log.Infow("Publishing message", "message", newMessage)
+				middleware.SetCorrelationID(operation.UUID.String(), newMessage)
+				newMessage.SetContext(c)
+				sp.AddEvent("message created", trace.WithAttributes(attribute.String("uuid", newMessage.UUID)))
+				log.Debugw("Publishing message", "message", newMessage)
 				s.publisher.Publish(
 					fmt.Sprintf(
 						"%s.%s",
@@ -97,7 +98,7 @@ func (s structHandler) Handler(msg *amqpMessage.Message) (err error) {
 			}
 		}(ctx, op)
 	}
-	span.AddEvent("waiting for publishing to complete")
+	span.End()
 	wg.Wait()
 	return
 }
@@ -115,17 +116,27 @@ func CreateRouter(ctx context.Context) (router *amqpMessage.Router, err error) {
 	router.AddMiddleware(func(h amqpMessage.HandlerFunc) amqpMessage.HandlerFunc {
 		return func(message *amqpMessage.Message) ([]*amqpMessage.Message, error) {
 			propagators := propagation.NewCompositeTextMapPropagator(
-				propagation.TraceContext{},
 				propagation.Baggage{},
+				propagation.TraceContext{},
 			)
-			carrier := propagation.MapCarrier{
-				"traceparent": message.Metadata.Get("traceparent"),
-				"baggage":     message.Metadata.Get("baggage"),
+			b, err := baggage.Parse(message.Metadata.Get("baggage"))
+			if err != nil {
+				log.Errorw("Unable to parse baggage", "error", err)
+			} else {
+				middleware.SetCorrelationID(b.Member("uuid").Value(), message)
 			}
-			message.SetContext(propagators.Extract(message.Context(), carrier))
-			propagators.Inject(message.Context(), carrier)
-			msg, err := h(message)
-			return msg, err
+			carrier := propagation.MapCarrier{
+				"baggage":     message.Metadata.Get("baggage"),
+				"traceparent": message.Metadata.Get("traceparent"),
+			}
+			message.SetContext(
+				propagators.Extract(
+					message.Context(),
+					carrier,
+				),
+			)
+			message.UUID = watermill.NewUUID()
+			return h(message)
 		}
 	})
 
@@ -135,7 +146,7 @@ func CreateRouter(ctx context.Context) (router *amqpMessage.Router, err error) {
 			ctx, span := tracer.Start(
 				message.Context(),
 				"handler",
-				trace.WithSpanKind(trace.SpanKindProducer),
+				trace.WithSpanKind(trace.SpanKindConsumer),
 				trace.WithAttributes(attribute.String("message.uuid", message.UUID)),
 				trace.WithAttributes(attribute.String("message.baggage", message.Metadata.Get("baggage"))),
 			)

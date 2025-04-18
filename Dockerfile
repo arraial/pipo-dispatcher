@@ -33,6 +33,8 @@ RUN --mount=type=cache,target="/root/.cache/go-build" \
 
 # test application
 FROM builder-base AS test
+ARG APP_NAME
+COPY ./config /etc/${APP_NAME}
 RUN go test -v ./...
 
 # runtime
