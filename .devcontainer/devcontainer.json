@@ -1,0 +1,13 @@
+{
+	"name": "Debian",
+	"image": "mcr.microsoft.com/devcontainers/base:bookworm",
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {},
+		"ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {},
+		"ghcr.io/devcontainers/features/go:1": {
+			"version": "1.23"
+		}
+	},
+	"postCreateCommand": "make dev_setup;",
+    "runArgs": ["--name", "pipo-dispatcher-devcontainer"]
+}
