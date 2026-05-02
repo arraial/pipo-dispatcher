@@ -7,7 +7,7 @@ on:
 
 jobs:
   go:
-    uses: arraial/workflows/.github/workflows/go.yml@0.0.8
+    uses: arraial/workflows/.github/workflows/go.yml@0.0.12
     secrets: inherit
     with:
       app_name: ${{ vars.APP_NAME }}
